@@ -5,12 +5,6 @@
 //! - `app.name` app name, defaults to `analog`.
 //! - `app.version` app version, defaults to `0`.
 //!
-//! - `app.static` if true, acitvates static file server
-//! - `app.static.path` path to static files, defaults to `$CWD/static`.
-//! - `app.static.pattern` regexp pattern for static, defaults to
-//!                        `\\\/static\\\/(.+)$`
-//! - `app.static.cachecontrol` enables cache control for static files.
-//!
 //! - `http.server` server name, defaults to "`app.name`/`app.version`"
 //! - `http.port` http port to listen to, defaults to `9110`
 //! - `http.nodate` do not include current date in responses
@@ -21,20 +15,14 @@
 //!
 //! - `json.prettify` prettify json responses with 4 spaces.
 //!
-
-import {Runtime} from "//silo.tools/";
+import Http from "http";
+import Url from "url";
+import QueryString from "querystring";
 
 import {Dict} from "//es.parts/ess/0.0.1/";
 import {List} from "//es.parts/ess/0.0.1/";
-import {Mime} from "//es.parts/ess/0.0.1/";
 import {Str} from "//es.parts/ess/0.0.1/";
-import {Url} from "//es.parts/ess/0.0.1/";
 import {Path} from "//es.parts/ess/0.0.1/";
-import {QueryString} from "//es.parts/ess/0.0.1/";
-
-import {Fs} from "//es.parts/isoio/0.0.1/";
-import {Http} from "//es.parts/isoio/0.0.1/";
-import {Process} from "//es.parts/isoio/0.0.1/";
 
 export const HOOK_STARTUP = "analog.startup";
 export const HOOK_REQUEST = "http.request";
@@ -44,7 +32,65 @@ export const HOOK_LISTEN = "http.listen";
 export const HOOK_REQUESTERROR = "http.error";
 export const HOOK_ERROR = "analog.error";
 
-export {init};
+export const STATUS_OK = 200;
+export const STATUS_CREATED = 201;
+export const STATUS_ACCEPTED = 202;
+export const STATUS_NON_AUTHORITATIVE_INFORMATION = 203;
+export const STATUS_NO_CONTENT = 204;
+export const STATUS_RESET_CONTENT = 205;
+export const STATUS_PARTIAL_CONTENT = 206;
+export const STATUS_MULTI_STATUS = 207;
+export const STATUS_ALREADY_REPORTED = 208;
+export const STATUS_IM_USED = 209;
+export const STATUS_MULTIPLE_CHOICES = 300;
+export const STATUS_MOVED_PERMANENTLY = 301;
+export const STATUS_FOUND = 302;
+export const STATUS_SEE_OTHER = 303;
+export const STATUS_NOT_MODIFIED = 304;
+export const STATUS_USE_PROXY = 305;
+export const STATUS_SWITCH_PROXY = 306;
+export const STATUS_TEMPORARY_REDIRECT = 307;
+export const STATUS_PERMANENT_REDIRECT = 308;
+export const STATUS_BAD_REQUEST = 400;
+export const STATUS_UNAUTHORIZED = 401;
+export const STATUS_PAYMENT_REQUIRED = 402;
+export const STATUS_FORBIDDEN = 403;
+export const STATUS_NOT_FOUND = 404;
+export const STATUS_METHOD_NOT_ALLOWED = 405;
+export const STATUS_NOT_ACCEPTABLE = 406;
+export const STATUS_PROXY_AUTHENTICATION_REQUIRED = 407;
+export const STATUS_REQUEST_TIME_OUT = 408;
+export const STATUS_CONFLICT = 409;
+export const STATUS_GONE = 410;
+export const STATUS_LENGTH_REQUIRED = 411;
+export const STATUS_PRECONDITION_FAILED = 412;
+export const STATUS_PAYLOAD_TOO_LARGE = 413;
+export const STATUS_URI_TOO_LONG = 414;
+export const STATUS_UNSUPPORTED_MEDIA_TYPE = 415;
+export const STATUS_RANGE_NOT_SATISFIABLE = 416;
+export const STATUS_EXPECTATION_FAILED = 417;
+export const STATUS_IM_A_TEAPOT = 418;
+export const STATUS_MISDIRECTED_REQUEST = 421;
+export const STATUS_UNPROCESSABLE_ENTITY = 422;
+export const STATUS_LOCKED = 423;
+export const STATUS_FAILED_DEPENDENCY = 424;
+export const STATUS_UPGRADE_REQUIRED = 426;
+export const STATUS_PRECONDITION_REQUIRED = 428;
+export const STATUS_TOO_MANY_REQUESTS = 429;
+export const STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
+export const STATUS_UNAVAILABLE_FOR_LEGAL_REASONS = 451;
+export const STATUS_INTERNAL_SERVER_ERROR = 500;
+export const STATUS_NOT_IMPLEMENTED = 501;
+export const STATUS_BAD_GATEWAY = 502;
+export const STATUS_SERVICE_UNAVAILABLE = 503;
+export const STATUS_GATEWAY_TIME_OUT = 504;
+export const STATUS_HTTP_VERSION_NOT_SUPPORTED = 505;
+export const STATUS_VARIANT_ASLO_NEGOTIATES = 506;
+export const STATUS_INSUFFICIENT_STORAGE = 507;
+export const STATUS_LOOP_DETECTED = 508;
+export const STATUS_NOT_EXTENDED = 510;
+export const STATUS_NETWORK_AUTHENTICATION_REQUIRED = 511;
+
 export {start};
 export {shutdown};
 export {cwd};
@@ -58,16 +104,8 @@ export {verbose};
 export {warning};
 export {error};
 export {trigger};
-export {config};
-export {configAsPath};
-export {configIsTruthy};
 export {get};
 export {set};
-export {setRenderer};
-
-export {file};
-
-export {render};
 
 export {redirect};
 
@@ -79,14 +117,67 @@ export {notFound};
 export {unauthorized};
 export {badRequest};
 
-export {cacheControl};
-
 const DEFAULT_NAME = "analog";
 const DEFAULT_VERSION = 0;
 const DEFAULT_HTTP_PORT = 9110;
 
 const FLAG_NODATE       = 0x01 << 0;
 const FLAG_NOOUTPUT     = 0x01 << 1;
+
+class InternalRequest {
+    constructor(message, response) {
+        this.headers = message.headers;
+        this.method = message.method;
+        this.statusCode = message.statusCode;
+        this.statusMessage = message.statusMessage;
+        this.url = message.url;
+
+        this._message = message;
+        this._response = response;
+        this._responded = false;
+    }
+
+    respond(init) {
+        if (this._responded === true) {
+            return Promise.reject(new Error("Already responded"));
+        }
+
+        this._responded = true;
+
+        const headers = init.headers;
+        const status = init.status || 200;
+        const statusText = init.statusText || statusCodeToText(status);
+        const body = init.body;
+
+        const response = this._response;
+        this._response = null;
+
+        return new Promise((resolve, reject) => {
+            response.on("finish", resolve);
+            response.on("error", reject);
+
+            try {
+                for (let k in headers) {
+                    response.setHeader(k, headers[k]);
+                }
+            } catch(error) {
+                try {
+                    response.writeHead(500, "");
+                    response.end();
+                } catch(error2) {
+                }
+                return reject(error);
+            }
+
+            try {
+                response.writeHead(status, statusText);
+                response.end(body);
+            } catch (error) {
+                return reject(error);
+            }
+        });
+    }
+}
 
 class Request {
     constructor(request, url, params) {
@@ -169,24 +260,28 @@ class Request {
 class Response {
     constructor(status=200) {
         this.status = status;
-        this.headers = new Http.Headers;
+        this.headers = {};
         this.body = null;
         this.request = null;
     }
 
     header(name) {
-        return this.headers.has(name);
+        return this.headers[name];
+    }
+
+    hasHeader(name) {
+        return name in this.headers;
     }
 
     setHeader(name, value) {
-        this.headers.set(name, value);
+        this.headers[Str.lower(name)] = value;
     }
 }
 
 class ErrorResponse extends Response {
     constructor(status=400, message=null) {
         super(status);
-        this.body = message || Http.statusCodeToText(status);
+        this.body = message || statusCodeToText(status);
         this.error = null;
     }
 }
@@ -197,52 +292,49 @@ class FileResponse extends Response {
     }
 }
 
-const State = Runtime.state("analog/1", state => initState(state || {}));
-
-/// Initialize Analog without starting the underlying web server.
-function init(configPathOrConfig=null) {
-    if (State.initialized) {
-        return Promise.reject(new Error("Already started"));
-    }
-
-    if (configPathOrConfig !== null && typeof configPathOrConfig === "object") {
-        const config = Dict.clone(configPathOrConfig);
-        config["analog.configdir"] = cwd();
-        return internalInit(config);
-    }
-
-    const path = Path.resolve(cwd(), configPathOrConfig || "./config.json");
-
-    return readExternalConfig(path)
-        .then(internalInit);
-}
+const State = resetState({});
 
 /// Initialize and starts the underlying web server
-function start(configPathOrConfig=null) {
-    if (State.initialized) {
-        return internalStart();
+///
+/// ## Available options
+/// - `port`, port to listen to
+///
+async function start(options={}) {
+    if (State.hooks[HOOK_RESPOND]) {
+        throw new Error("Already started");
     }
 
-    return init(configPathOrConfig).then(internalStart(configPathOrConfig));
+    hook(HOOK_RESPOND, handleRespondHook);
+    hook(HOOK_LISTEN, handleListenHook);
+
+    options.port = options.port || DEFAULT_HTTP_PORT;
+
+    const info = await internalListen(options, handleRequest);
+
+    return trigger(HOOK_LISTEN, info);
 }
 
-function shutdown() {
-    return Http.close(State)
-        .catch(_ => {
-        })
-        .then(() => {
-            initState(State);
-        });
+async function shutdown() {
+    if (State.server === null) {
+        throw new Error("Server is not running");
+    }
+
+    return new Promise((resolve, reject) => {
+       server.on("close", () => {
+           resetState(State);
+           resolve();
+       });
+    });
 }
 
 /// Returns current working directory of the application
 function cwd() {
-    return Process.cwd();
+    return State.cwd;
 }
 
 /// Returns a dict with environment variables passed to the application
 function env() {
-    return Process.env();
+    return Dict.clone(State.env);
 }
 
 /// Add an application route.
@@ -322,69 +414,6 @@ function trigger(name, params=null) {
     return callPromiseChain(callbacks, 0, params);
 }
 
-/// Get application configuration
-///
-/// ## Examples
-/// ```
-/// Analog.config();
-/// // {}
-///
-/// Analog.config("app.name");
-/// // "analog"
-///
-/// Analog.config("nonexistingconfig.key", "value");
-/// // "value"
-///
-/// ```
-function config(key=null, alt=null) {
-    if (key === null) {
-        return Dict.clone(State.config);
-    }
-
-    return key in State.config ? State.config[key] : alt;
-}
-
-/// Get the truthy value of a config key
-///
-/// ## Examples
-/// ```
-/// Analog.configIsTruthy("nonexistingconfig.key");
-/// // false
-///
-/// Analog.configIsTruthy("app.name");
-/// // true
-/// ```
-function configIsTruthy(key) {
-    if (key in State.config === false) {
-        return false;
-    }
-
-    const value = State.config[key];
-
-    if (typeof value === "boolean") {
-        return value;
-    } else if (typeof value === "number") {
-        return !!value;
-    } else if (typeof value === "string") {
-        const str = Str.lower(value);
-        return str === "true" || str === "1" || str === "yes";
-    }
-
-    return value !== null;
-}
-
-function configAsPath(key, alt=null) {
-    if (key in State.config) {
-        return Path.resolve(State.config["analog.configdir"], State.config[key]);
-    }
-
-    if (alt !== null) {
-        return Path.resolve(State.config["analog.configdir"], alt);
-    }
-
-    return null;
-}
-
 function get(key, alt=null) {
     return key in State.kvstore ? State.kvstore[key] : alt;
 }
@@ -395,53 +424,6 @@ function set(key, value=null) {
     }
 
     State.kvstore[key] = value;
-}
-
-function setRenderer(callback) {
-    State.renderCallback = callback;
-}
-
-function file(path, mime=null) {
-    return Fs.size(path)
-        .then(size => {
-            const response = new FileResponse;
-            response.setHeader("content-type", mime || Mime.lookupPath(path));
-            response.setHeader("content-length", size);
-            response.body = Fs.readable(path);
-            return response;
-        })
-        .catch(error => {
-            if (error.code === Fs.ERR_NOT_FOUND) {
-                return notFound();
-            }
-
-            throw error;
-        });
-}
-
-function render(template, context) {
-    const dirpath = configAsPath("app.templates.path", "templates");
-    const path = Path.join(dirpath, template);
-
-    if (State.renderCallback === null) {
-        return file(path);
-    }
-
-    let promise;
-
-    try {
-        const result = State.renderCallback(path, context);
-
-        if (result instanceof Promise) {
-            promise = result;
-        } else {
-            promise = Promise.resolve(result);
-        }
-    } catch (error) {
-        promise = Promise.reject(error);
-    }
-
-    return promise;
 }
 
 function redirect(location) {
@@ -457,41 +439,28 @@ function created(location) {
 }
 
 function methodNotAllowed(object=null) {
-    return reject(Http.METHOD_NOT_ALLOWED, object);
+    return reject(STATUS_METHOD_NOT_ALLOWED, object);
 }
 
 function notFound(object=null) {
-    return reject(Http.NOT_FOUND, object);
+    return reject(STATUS_NOT_FOUND, object);
 }
 
 function unauthorized(object=null) {
-    return reject(Http.UNAUTHORIZED, object);
+    return reject(STATUS_UNAUTHORIZED, object);
 }
 
 function badRequest(object=null) {
-    return reject(Http.BAD_REQUEST, object);
+    return reject(STATUS_BAD_REQUEST, object);
 }
 
-function reject(status=Http.INTERNAL_SERVER_ERROR, object=null) {
+function reject(status=STATUS_INTERNAL_SERVER_ERROR, object=null) {
     return new ErrorResponse(status, object);
-}
-
-function cacheControl(value, response) {
-    return request => {
-        request.after(response => {
-            if (response.status === 200 &&
-                response.headers.has("cache-control") === false) {
-                response.setHeader("cache-control", value);
-            }
-        });
-
-        return response;
-    };
 }
 
 // Callbacks
 
-function initState(state) {
+function resetState(state) {
     state.name = "analog";
     state.flags = 0;
     state.version = 0;
@@ -501,8 +470,8 @@ function initState(state) {
     state.handlers = [];
     state.hooks = Dict.create();
     state.config = Dict.create();
-    state.renderCallback = null;
     state.kvstore =  Dict.create();
+    state.server = null;
     return state;
 }
 
@@ -521,76 +490,67 @@ function internalInit(config) {
     return trigger(HOOK_STARTUP);
 }
 
-function internalStart() {
-    hook(HOOK_RESPOND, handleRespondHook);
-    hook(HOOK_LISTEN, handleListenHook);
+// Callbacks
 
-    let port = parseInt(State.config["http.port"], 10);
-
-    const httpOptions = {
-        port: isNaN(port) ? DEFAULT_HTTP_PORT : port,
-        requestHandler: handleRequest,
-    };
-
-    return Http.listen(httpOptions, State)
-        .then(info => trigger(HOOK_LISTEN, info));
-}
-
-function handleRequest(context, httpRequest) {
+async function handleRequest(internalRequest) {
     let url, initialError;
 
     try {
-        url = Url.parse(httpRequest.url);
+        url = Url.parse(internalRequest.url);
     } catch(error) {
         url = Url.parse("/");
         initialError = error;
     }
 
     const {callback, params} = findRoute(url.pathname);
-    const request = new Request(httpRequest, url, params);
+    const request = new Request(internalRequest, url, params);
 
-    return routeRequest(request, callback, initialError)
-        .catch(error => {
-            if (error instanceof Response) {
-                return makeResponse(error.request || request, error);
+    let response;
+
+    try {
+        if (initialError) {
+            response = Promise.reject(initialError);
+        } else {
+            response = await routeRequest(request, callback);
+        }
+    } catch (error) {
+        if (error instanceof Response) {
+            response =  await makeResponse(error.request || request, error);
+        } else {
+            let result;
+
+            try {
+                result = await trigger(HOOK_REQUESTERROR, error);
+            } catch (innerError) {
+                result = await makeErrorResponse(request, error, innerError);
             }
 
-            return trigger(HOOK_REQUESTERROR, error)
-                .catch(innerError =>
-                    makeErrorResponse(request, error, innerError))
-                .then(result => {
-                    if (result instanceof Response) {
-                        return result;
-                    }
-                    return makeErrorResponse(request, error);
-                });
-        })
-        .then(response => respond(httpRequest, response))
-        .catch(error => {
+            if (result instanceof Response) {
+                response = result;
+            } else {
+                console.log("--- makeErrorResponse --- ");
+                console.log(error);
+                response = await makeErrorResponse(request, error);
+            }
+        }
+    }
+
+    try {
+        await trigger(HOOK_RESPOND, response);
+        internalRequest.respond(response);
+    } catch (innerError) {
+        try {
             if (HOOK_ERROR in State.hooks === false) {
                 throw error;
             }
-
-            return trigger(HOOK_ERROR, error);
-        })
-        .catch(error => handleUnhandledError(httpRequest, error));
+            response = trigger(HOOK_ERROR, error);
+        } catch (unhandledError) {
+            return handleUnhandledError(httpRequest, unhandledError);
+        }
+    }
 }
 
 function handleStartupHook() {
-    if (configIsTruthy("app.static")) {
-        const basepath = configAsPath("app.static.path", "static");
-        const pattern = config("app.static.pattern", "\\\/static\\\/(.+)$");
-        const cachecontrol = configIsTruthy("app.static.cachecontrol");
-
-        route(new RegExp(pattern), request => {
-            const response = file(Path.join(basepath, request.params(0)));
-            if (cachecontrol) {
-                return cacheControl({public: 1, maxAge: 259200}, response);
-            }
-            return response;
-        });
-    }
-
     if (configIsTruthy("http.jsonerrors")) {
         hook(HOOK_RESPONSE, jsonErrorsMiddleware);
     }
@@ -606,6 +566,8 @@ function handleListenHook(info) {
 }
 
 function handleUnhandledError(httpRequest, error) {
+    console.log("--- handleUnhandledError ---");
+    console.log(error);
     const message = error.stack
                  || error.message
                  || "Unknown error";
@@ -638,67 +600,40 @@ function maybeset(flag, truthy) {
     }
 }
 
-function readExternalConfig(path) {
-    return Fs.read(path)
-        .then(result =>  result.json())
-        .then(config => {
-            if ("analog.configdir" in config === false) {
-                config["analog.configdir"] = Path.dirname(path);
-            }
+async function routeRequest(request, callback) {
+    const result = await trigger(HOOK_REQUEST, request);
 
-            return config;
-        })
-        .catch(() => {
-            warning(`Unable to read config form ${path}`);
-            return Dict.create();
-        });
-}
-
-function respond(request, response) {
-    return trigger(HOOK_RESPOND, response)
-        .then(() => request.respond(response));
-}
-
-function routeRequest(request, callback, initialError) {
-    if (initialError) {
-        return Promise.reject(initialError);
+    if (result) {
+        return makeResponse(request, result);
     }
 
-    return trigger(HOOK_REQUEST, request)
-        .then(value => {
-            if (value) {
-                return makeResponse(request, value);
-            } else {
-                if (!callback) {
-                    return makeResponse(request, notFound());
-                }
+    if (!callback) {
+        return makeResponse(request, notFound());
+    }
 
-                return callCallbackChain(callback, request)
-                    .then(value => makeResponse(request, value));
-            }
-        });
+    const result2 = await callCallbackChain(callback, request);
+    return makeResponse(request, result2);
 }
 
-function callCallbackChain(value, params) {
-    if (typeof value === "function") {
-        try {
-            const result = value(params);
+async function callCallbackChain(value, params) {
+    if (typeof value !== "function") {
+        return Promise.resolve(value);
+    }
 
-            if (result instanceof Promise) {
-                return result
-                    .then(inner => callCallbackChain(inner, params));
-            }
+    try {
+        const result = value(params);
 
-            return callCallbackChain(result, params);
-        } catch (error) {
-            return Promise.reject(error);
+        if (result instanceof Promise) {
+            return callCallbackChain(await result, params);
         }
-    }
 
-    return Promise.resolve(value);
+        return callCallbackChain(result, params);
+    } catch (error) {
+        return Promise.reject(error);
+    }
 }
 
-function callPromiseChain(callbacks, idx, params, arg=void(0)) {
+async function callPromiseChain(callbacks, idx, params, arg=void(0)) {
     if (idx === List.len(callbacks)) {
         return Promise.resolve(arg);
     }
@@ -719,12 +654,13 @@ function callPromiseChain(callbacks, idx, params, arg=void(0)) {
         return Promise.reject(error);
     }
 
-    return promise.then(arg2 =>
-            callPromiseChain(callbacks, idx + 1, params, arg2 || arg));
+    const arg2 = await promise;
+
+    return callPromiseChain(callbacks, idx + 1, params, arg2 || arg);
 }
 
 function makeErrorResponse(request, error, _outerError) {
-    const response = reject(Http.INTERNAL_SERVER_ERROR);
+    const response = reject(STATUS_INTERNAL_SERVER_ERROR);
     response.error = error instanceof Error ? error : null;
     return makeResponse(request, response);
 }
@@ -743,8 +679,8 @@ function makeResponse(request, value) {
 
     if (response.body === void(0)) {
         response.setHeader("content-type", "text/plain");
-        response.body = Http.statusCodeToText(response.status);
-    } else if (response.status === Http.OK && response.body === null) {
+        response.body = statusCodeToText(response.status);
+    } else if (response.status === STATUS_OK && response.body === null) {
         response.status = Http.NO_CONTENT;
     }
 
@@ -753,22 +689,21 @@ function makeResponse(request, value) {
             .then(() => trigger(HOOK_RESPONSE, response))
             .then(() => finalizeResponse(response));
     } else {
-
         return trigger(HOOK_RESPONSE, response)
             .then(() => finalizeResponse(response));
     }
 }
 
 function finalizeResponse(response) {
-    if (response.headers.has("server") === false) {
+    if (response.hasHeader("server") === false) {
         response.setHeader("server", State.servername);
     }
 
-    if (response.headers.has("date") === false && isset(FLAG_NODATE) === false) {
+    if (response.hasHeader("date") === false && isset(FLAG_NODATE) === false) {
         response.setHeader("date", (new Date).toUTCString());
     }
 
-    if (response.headers.has("content-type") === false &&
+    if (response.hasHeader("content-type") === false &&
         response.body !== null) {
 
         // TODO: Add support for Streams
@@ -781,7 +716,7 @@ function finalizeResponse(response) {
             response.setHeader("content-length", Str.bytelen(response.body));
         } else {
             response.setHeader("content-type", "text/plain");
-            response.body = Http.statusCodeToText(response.status);
+            response.body = statusCodeToText(response.status);
         }
     }
 
@@ -861,10 +796,73 @@ function jsonErrorsMiddleware(response) {
     } else if (response.error !== null && typeof response.error === "object") {
         response.body = response.error.stack
                      || response.error.message
-                     || Http.statusCodeToText(response.code);
+                     || statusCodeToText(response.code);
     }
 }
 
 function pad(n) {
     return n < 10 ? `0${n}` : String(n);
+}
+
+function internalListen(options, requestHandler) {
+    State.server = Http.createServer();
+
+    return new Promise((resolve, reject) => {
+        State.server.on("error", error => {
+            State.server = null;
+            reject(error);
+        });
+
+        State.server.on("listening", _ => {
+            const {port, address, family} = State.server.address();
+            resolve({port, address, family});
+        });
+
+        State.server.on("request", (message, response) => {
+            requestHandler(new InternalRequest(message, response));
+        });
+
+        if (options.port && options.hostname) {
+            State.server.listen(options.port, options.hostname);
+        } else if (options.port) {
+            State.server.listen(options.port);
+        } else {
+            State.server.listen();
+        }
+    });
+}
+
+/// Get the status text for a HTTP response code
+function statusCodeToText(code) {
+    // TODO: add all status codes
+    switch (code) {
+    default:
+        return String(code);
+    case STATUS_OK:
+        return "OK";
+    case STATUS_CREATED:
+        return "Created";
+    case STATUS_ACCEPTED:
+        return "Accepted";
+    case STATUS_NON_AUTHORITATIVE_INFORMATION:
+        return "Non-Authoritative Information";
+    case STATUS_NOT_FOUND:
+        return "Not found";
+    case STATUS_NO_CONTENT:
+        return "No Content";
+    case STATUS_UNAUTHORIZED:
+        return "Unauthorized";
+    case STATUS_RESET_CONTENT:
+        return "Reset Content";
+    case STATUS_PARTIAL_CONTENT:
+        return "Partial Content";
+    case STATUS_MULTI_STATUS:
+        return "Multi-Status";
+    case STATUS_ALREADY_REPORTED:
+        return "Already Reported";
+    case STATUS_IM_USED:
+        return "IM Used";
+    case STATUS_INTERNAL_SERVER_ERROR:
+        return "Internal Server Error";
+    }
 }
