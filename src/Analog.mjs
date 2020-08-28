@@ -119,7 +119,6 @@ export {badRequest};
 
 const DEFAULT_NAME = "analog";
 const DEFAULT_VERSION = 0;
-const DEFAULT_HTTP_PORT = 9110;
 
 const FLAG_NODATE       = 0x01 << 0;
 const FLAG_NOOUTPUT     = 0x01 << 1;
@@ -190,7 +189,7 @@ class Request {
     }
 
     header(name) {
-        return this._request.headers.get(Str.lower(name));
+        return this._request.headers[Str.lower(name)];
     }
 
     method(method=null) {
@@ -297,7 +296,7 @@ const State = resetState({});
 /// Initialize and starts the underlying web server
 ///
 /// ## Available options
-/// - `port`, port to listen to
+/// - `port`, port to listen to. Leave blank for random port.
 ///
 async function start(options={}) {
     if (State.hooks[HOOK_RESPOND]) {
@@ -307,11 +306,11 @@ async function start(options={}) {
     hook(HOOK_RESPOND, handleRespondHook);
     hook(HOOK_LISTEN, handleListenHook);
 
-    options.port = options.port || DEFAULT_HTTP_PORT;
-
     const info = await internalListen(options, handleRequest);
 
-    return trigger(HOOK_LISTEN, info);
+    await trigger(HOOK_LISTEN, info);
+
+    return info;
 }
 
 async function shutdown() {
@@ -320,10 +319,11 @@ async function shutdown() {
     }
 
     return new Promise((resolve, reject) => {
-       server.on("close", () => {
+       State.server.on("close", () => {
            resetState(State);
            resolve();
        });
+       State.server.close();
     });
 }
 
@@ -528,8 +528,6 @@ async function handleRequest(internalRequest) {
             if (result instanceof Response) {
                 response = result;
             } else {
-                console.log("--- makeErrorResponse --- ");
-                console.log(error);
                 response = await makeErrorResponse(request, error);
             }
         }
@@ -660,7 +658,8 @@ async function callPromiseChain(callbacks, idx, params, arg=void(0)) {
 }
 
 function makeErrorResponse(request, error, _outerError) {
-    const response = reject(STATUS_INTERNAL_SERVER_ERROR);
+    const status = error.httpStatus || STATUS_INTERNAL_SERVER_ERROR;
+    const response = reject(status);
     response.error = error instanceof Error ? error : null;
     return makeResponse(request, response);
 }
