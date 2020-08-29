@@ -297,14 +297,14 @@ const State = resetState({});
 ///
 /// ## Available options
 /// - `port`, port to listen to. Leave blank for random port.
-/// - `noOutput`, disable output to `stdout`
+/// - `disableOutputLogging`, disable output to `stdout`
 ///
 async function start(options={}) {
     if (State.hooks[HOOK_RESPOND]) {
         throw new Error("Already started");
     }
 
-    maybeset(FLAG_NOOUTPUT, options.noOutput);
+    maybeset(FLAG_NOOUTPUT, options.disableOutputLogging);
 
     hook(HOOK_RESPOND, handleRespondHook);
     hook(HOOK_LISTEN, handleListenHook);
