@@ -134,6 +134,11 @@ class InternalRequest {
         this._message = message;
         this._response = response;
         this._responded = false;
+        this._bodyUsed = false;
+    }
+
+    get bodyUsed() {
+        return this._bodyUsed;
     }
 
     respond(init) {
@@ -176,6 +181,40 @@ class InternalRequest {
             }
         });
     }
+
+    _fetchBodyAsText() {
+        // TODO: use same technique as Response
+
+        return new Promise((resolve, reject) => {
+            const message = this._message;
+            let text = "";
+
+            message.setEncoding("utf8");
+            message.on("data", chunk => text += chunk);
+            message.on("end", _ => resolve(text));
+            message.on("error", error => reject(error));
+        });
+    }
+
+    json() {
+        return this.text()
+            .then(b => Promise.resolve(b ? JSON.parse(b) : null));
+    }
+
+    text() {
+        if (this.bodyUsed) {
+            return Promise.reject(bodyUsedError());
+        }
+
+        this._bodyUsed = true;
+
+        if (this._fetchBodyAsText) {
+            return this._fetchBodyAsText();
+        }
+
+        return Promise.resolve(null);
+    }
+
 }
 
 class Request {
