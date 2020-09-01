@@ -15,14 +15,18 @@
 //!
 //! - `json.prettify` prettify json responses with 4 spaces.
 //!
+import Fs from "fs";
 import Http from "http";
 import Url from "url";
+import Stream from "stream";
 import QueryString from "querystring";
 
 import {Dict} from "//es.parts/ess/0.0.1/";
 import {List} from "//es.parts/ess/0.0.1/";
 import {Str} from "//es.parts/ess/0.0.1/";
 import {Path} from "//es.parts/ess/0.0.1/";
+
+import * as Mime from "./Mime.mjs";
 
 export const HOOK_STARTUP = "analog.startup";
 export const HOOK_REQUEST = "http.request";
@@ -107,6 +111,8 @@ export {trigger};
 export {get};
 export {set};
 
+export {file};
+
 export {redirect};
 
 export {reject};
@@ -173,11 +179,16 @@ class InternalRequest {
                 return reject(error);
             }
 
-            try {
+            if (isReadableStream(body)) {
                 response.writeHead(status, statusText);
-                response.end(body);
-            } catch (error) {
-                return reject(error);
+                body.pipe(response);
+            } else {
+                try {
+                    response.writeHead(status, statusText);
+                    response.end(body);
+                } catch (error) {
+                    return reject(error);
+                }
             }
         });
     }
@@ -466,6 +477,20 @@ function set(key, value=null) {
     }
 
     State.kvstore[key] = value;
+}
+
+async function file(path, mime=null) {
+    try {
+        const stat = await fsStat(path);
+
+        const response = new FileResponse;
+        response.setHeader("content-type", mime || Mime.lookupPath(path));
+        response.setHeader("content-length", stat.size);
+        response.body = Fs.createReadStream(path);
+        return response;
+    } catch (error) {
+        return notFound();
+    }
 }
 
 function redirect(location) {
@@ -906,4 +931,22 @@ function statusCodeToText(code) {
     case STATUS_INTERNAL_SERVER_ERROR:
         return "Internal Server Error";
     }
+}
+
+function fsStat(path) {
+    return new Promise((resolve, reject) => {
+        Fs.lstat(path, (error, stat) => {
+            if (error) {
+                return reject(error);
+            }
+
+            return resolve(stat);
+        })
+    });
+}
+
+function isReadableStream(obj) {
+    return obj instanceof Stream.Stream &&
+        typeof (obj._read === 'function') &&
+        typeof (obj._readableState === 'object');
 }
