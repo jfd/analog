@@ -17,14 +17,14 @@
 //!
 import Fs from "fs";
 import Http from "http";
-import Url from "url";
 import Stream from "stream";
 import QueryString from "querystring";
 
 import {Dict} from "//es.parts/ess/0.0.1/";
 import {List} from "//es.parts/ess/0.0.1/";
-import {Str} from "//es.parts/ess/0.0.1/";
 import {Path} from "//es.parts/ess/0.0.1/";
+import {Str} from "//es.parts/ess/0.0.1/";
+import {Url} from "//es.parts/ess/0.0.1/";
 
 import * as Mime from "./Mime.mjs";
 
@@ -128,6 +128,28 @@ const DEFAULT_VERSION = 0;
 
 const FLAG_NODATE       = 0x01 << 0;
 const FLAG_NOOUTPUT     = 0x01 << 1;
+const FLAG_STARTED      = 0x01 << 2;
+
+export class Response {
+    constructor(status=200) {
+        this.status = status;
+        this.headers = {};
+        this.body = null;
+        this.request = null;
+    }
+
+    header(name) {
+        return this.headers[name];
+    }
+
+    hasHeader(name) {
+        return name in this.headers;
+    }
+
+    setHeader(name, value) {
+        this.headers[Str.lower(name)] = value;
+    }
+}
 
 class InternalRequest {
     constructor(message, response) {
@@ -306,27 +328,6 @@ class Request {
     }
 }
 
-class Response {
-    constructor(status=200) {
-        this.status = status;
-        this.headers = {};
-        this.body = null;
-        this.request = null;
-    }
-
-    header(name) {
-        return this.headers[name];
-    }
-
-    hasHeader(name) {
-        return name in this.headers;
-    }
-
-    setHeader(name, value) {
-        this.headers[Str.lower(name)] = value;
-    }
-}
-
 class ErrorResponse extends Response {
     constructor(status=400, message=null) {
         super(status);
@@ -350,7 +351,7 @@ const State = resetState({});
 /// - `disableOutputLogging`, disable output to `stdout`
 ///
 async function start(options={}) {
-    if (State.hooks[HOOK_RESPOND]) {
+    if (isset(FLAG_STARTED)) {
         throw new Error("Already started");
     }
 
@@ -362,6 +363,8 @@ async function start(options={}) {
     const info = await internalListen(options, handleRequest);
 
     await trigger(HOOK_LISTEN, info);
+
+    maybeset(FLAG_STARTED, true);
 
     return info;
 }
@@ -728,6 +731,21 @@ function makeErrorResponse(request, error, _outerError) {
     const status = error.httpStatus || STATUS_INTERNAL_SERVER_ERROR;
     const response = reject(status);
     response.error = error instanceof Error ? error : null;
+
+    if (status === STATUS_INTERNAL_SERVER_ERROR) {
+        console.log("--- handleUnhandledError ---");
+        const message = error.stack
+                     || error.message
+                     || "Unknown error";
+
+        const text = `${Str.repeat("=", 15)} UNHANDLED ERROR ${Str.repeat("=", 15)}\n`
+                   + `${message}\n`
+                   + `${Str.repeat("=", 47)}\n`;
+
+        console.error(text);
+    }
+
+
     return makeResponse(request, response);
 }
 
