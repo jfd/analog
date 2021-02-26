@@ -349,6 +349,7 @@ const State = resetState({});
 /// ## Available options
 /// - `port`, port to listen to. Leave blank for random port.
 /// - `disableOutputLogging`, disable output to `stdout`
+/// - `enableJsonErrors`, use jsonErrors
 ///
 async function start(options={}) {
     if (isset(FLAG_STARTED)) {
@@ -359,6 +360,10 @@ async function start(options={}) {
 
     hook(HOOK_RESPOND, handleRespondHook);
     hook(HOOK_LISTEN, handleListenHook);
+
+    if (options.enableJsonErrors) {
+        hook(HOOK_RESPONSE, jsonErrorsMiddleware);
+    }
 
     const info = await internalListen(options, handleRequest);
 
@@ -618,12 +623,6 @@ async function handleRequest(internalRequest) {
     }
 }
 
-function handleStartupHook() {
-    if (configIsTruthy("http.jsonerrors")) {
-        hook(HOOK_RESPONSE, jsonErrorsMiddleware);
-    }
-}
-
 function handleRespondHook(response) {
     const r = response.request;
     datelog(`"${r.method()} ${r.url().href}" ${response.status}`);
@@ -861,27 +860,20 @@ function jsonErrorsMiddleware(response) {
         return;
     }
 
-    if (response.request.accepts("application/json")) {
-        let code, message;
+    let code, message;
 
-        if (response.error instanceof Error) {
-            code = response.error.code || response.status;
-            message = response.error.message;
-        } else if (typeof response.error === "string") {
-            code = response.status;
-            message = response.error;
-        } else {
-            code = response.status;
-            message = String(response.body);
-        }
-
-        response.body = { error: { code, message } };
-
-    } else if (response.error !== null && typeof response.error === "object") {
-        response.body = response.error.stack
-                     || response.error.message
-                     || statusCodeToText(response.code);
+    if (response.error instanceof Error) {
+        code = response.error.code || response.status;
+        message = response.error.message;
+    } else if (typeof response.error === "string") {
+        code = response.status;
+        message = response.error;
+    } else {
+        code = response.status;
+        message = String(response.body);
     }
+
+    response.body = { error: { code, message } };
 }
 
 function pad(n) {
