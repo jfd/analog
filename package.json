@@ -1,0 +1,26 @@
+{
+  "name": "@jfd/analog",
+  "version": "1.0.0",
+  "description": "A minimal micro-service framework",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jfd/analog.git"
+  },
+  "keywords": [
+    "webserver",
+    "microframework"
+  ],
+  "author": "johan@native.email",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/jfd/analog/issues"
+  },
+  "homepage": "https://github.com/jfd/analog#readme",
+  "dependencies": {
+    "@jfd/ess": "^1.0.0"
+  }
+}

@@ -5,9 +5,9 @@ cflags: "MODE_REVAMP";
 import {extensionToMimeType} from "./res/mimedb.mjs";
 import {mimeTypes} from "./res/mimedb.mjs";
 
-import {List} from "//es.parts/ess/0.0.1/";
-import {Path} from "//es.parts/ess/0.0.1/";
-import {Str} from "//es.parts/ess/0.0.1/";
+import {List} from "@jfd/ess";
+import {Path} from "@jfd/ess";
+import {Str} from "@jfd/ess";
 
 export {charset};
 export {compressible};

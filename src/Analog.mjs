@@ -20,11 +20,11 @@ import Http from "http";
 import Stream from "stream";
 import QueryString from "querystring";
 
-import {Dict} from "//es.parts/ess/0.0.1/";
-import {List} from "//es.parts/ess/0.0.1/";
-import {Path} from "//es.parts/ess/0.0.1/";
-import {Str} from "//es.parts/ess/0.0.1/";
-import {Url} from "//es.parts/ess/0.0.1/";
+import {Dict} from "@jfd/ess";
+import {List} from "@jfd/ess";
+import {Path} from "@jfd/ess";
+import {Str} from "@jfd/ess";
+import {Url} from "@jfd/ess";
 
 import * as Mime from "./Mime.mjs";
 
